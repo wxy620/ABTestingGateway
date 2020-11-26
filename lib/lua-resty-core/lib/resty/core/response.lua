@@ -13,12 +13,17 @@ local FFI_BAD_CONTEXT = base.FFI_BAD_CONTEXT
 local FFI_NO_REQ_CTX = base.FFI_NO_REQ_CTX
 local FFI_DECLINED = base.FFI_DECLINED
 local get_string_buf = base.get_string_buf
-local getmetatable = getmetatable
+local setmetatable = setmetatable
 local type = type
 local tostring = tostring
-local getfenv = getfenv
+local get_request = base.get_request
 local error = error
 local ngx = ngx
+
+
+local _M = {
+    version = base.version
+}
 
 
 local MAX_HEADER_VALUES = 100
@@ -31,19 +36,19 @@ ffi.cdef[[
     int ngx_http_lua_ffi_set_resp_header(ngx_http_request_t *r,
         const char *key_data, size_t key_len, int is_nil,
         const char *sval, size_t sval_len, ngx_http_lua_ffi_str_t *mvals,
-        size_t mvals_len, char **errmsg);
+        size_t mvals_len, int override, char **errmsg);
 
     int ngx_http_lua_ffi_get_resp_header(ngx_http_request_t *r,
         const unsigned char *key, size_t key_len,
         unsigned char *key_buf, ngx_http_lua_ffi_str_t *values,
-        int max_nvalues);
+        int max_nvalues, char **errmsg);
 ]]
 
 
-local function set_resp_header(tb, key, value)
-    local r = getfenv(0).__ngx_req
+local function set_resp_header(tb, key, value, no_override)
+    local r = get_request()
     if not r then
-        return error("no request found")
+        error("no request found")
     end
 
     if type(key) ~= "string" then
@@ -52,13 +57,21 @@ local function set_resp_header(tb, key, value)
 
     local rc
     if value == nil then
-        rc = C.ngx_http_lua_ffi_set_resp_header(r, key, #key, true, nil, 0,
-                                                nil, 0, errmsg)
+        if no_override then
+            error("invalid header value", 3)
+        end
+
+        rc = C.ngx_http_lua_ffi_set_resp_header(r, key, #key, true, nil, 0, nil,
+                                                0, 1, errmsg)
     else
         local sval, sval_len, mvals, mvals_len, buf
 
         if type(value) == "table" then
             mvals_len = #value
+            if mvals_len == 0 and no_override then
+                return
+            end
+
             buf = get_string_buf(ffi_str_size * mvals_len)
             mvals = ffi_cast(ffi_str_type, buf)
             for i = 1, mvals_len do
@@ -85,9 +98,10 @@ local function set_resp_header(tb, key, value)
             mvals_len = 0
         end
 
+        local override_int = no_override and 0 or 1
         rc = C.ngx_http_lua_ffi_set_resp_header(r, key, #key, false, sval,
                                                 sval_len, mvals, mvals_len,
-                                                errmsg)
+                                                override_int, errmsg)
     end
 
     if rc == 0 or rc == FFI_DECLINED then
@@ -95,22 +109,25 @@ local function set_resp_header(tb, key, value)
     end
 
     if rc == FFI_NO_REQ_CTX then
-        return error("no request ctx found")
+        error("no request ctx found")
     end
 
     if rc == FFI_BAD_CONTEXT then
-        return error("API disabled in the current context")
+        error("API disabled in the current context", 2)
     end
 
     -- rc == FFI_ERROR
-    return error(ffi_str(errmsg[0]))
+    error(ffi_str(errmsg[0]), 2)
 end
 
 
+_M.set_resp_header = set_resp_header
+
+
 local function get_resp_header(tb, key)
-    local r = getfenv(0).__ngx_req
+    local r = get_request()
     if not r then
-        return error("no request found")
+        error("no request found")
     end
 
     if type(key) ~= "string" then
@@ -122,12 +139,13 @@ local function get_resp_header(tb, key)
     local key_buf = get_string_buf(key_len + ffi_str_size * MAX_HEADER_VALUES)
     local values = ffi_cast(ffi_str_type, key_buf + key_len)
     local n = C.ngx_http_lua_ffi_get_resp_header(r, key, key_len, key_buf,
-                                                 values, MAX_HEADER_VALUES)
+                                                 values, MAX_HEADER_VALUES,
+                                                 errmsg)
 
     -- print("retval: ", n)
 
     if n == FFI_BAD_CONTEXT then
-        return error("API disabled in the current context")
+        error("API disabled in the current context", 2)
     end
 
     if n == 0 then
@@ -149,17 +167,17 @@ local function get_resp_header(tb, key)
     end
 
     -- n == FFI_ERROR
-    return error("no memory")
+    error(ffi_str(errmsg[0]), 2)
 end
 
 
 do
-    local mt = getmetatable(ngx.header)
+    local mt = new_tab(0, 2)
     mt.__newindex = set_resp_header
     mt.__index = get_resp_header
+
+    ngx.header = setmetatable(new_tab(0, 0), mt)
 end
 
 
-return {
-    version = base.version
-}
+return _M
