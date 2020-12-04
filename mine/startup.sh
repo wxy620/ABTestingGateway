@@ -1,0 +1,1 @@
+/usr/local/Cellar/openresty/1.17.8.2_1/nginx/sbin/nginx -p `pwd` -c nginx.conf
