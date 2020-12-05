@@ -213,7 +213,7 @@ local pfunc = function()
             usertable[idx] = info
         end
     end
-
+    log.debug("geo_city : "..ngx.var.geo_city)
 	log:debug('userinfo\t', cjson.encode(usertable))
 
 

@@ -69,9 +69,9 @@ _M.getUpstream = function(self, city)
     
     local database	= self.database
     local policyLib = self.policyLib
-    local geoCtiy = ngx.var.geo_city
+    -- local geoCtiy = ngx.var.geo_city
     
-    local upstream, err = database:hget(policyLib , geoCtiy)
+    local upstream, err = database:hget(policyLib , city)
     if not upstream then error{ERRORINFO.REDIS_ERROR, err} end
     
     if upstream == ngx.null then
